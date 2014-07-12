@@ -1,0 +1,102 @@
+diff -urN cs411-group25/kernel/sched.c cs411-group25new/kernel/sched.c
+--- cs411-group25/kernel/sched.c	2014-04-08 18:28:32.188012828 -0700
++++ cs411-group25new/kernel/sched.c	2014-04-12 16:45:44.604463865 -0700
+@@ -125,6 +125,8 @@
+ 
+ static inline int rt_policy(int policy)
+ {
++	if (unlikely(policy == SCHED_FIFO || policy == SCHED_RR))
++		return 1;
+ 	return 0;
+ }
+ 
+@@ -2049,7 +2051,8 @@
+ 		 * rely on PI working anyway.
+ 		 */
+ 		
+-		
++		sched_setscheduler_nocheck(stop, SCHED_FIFO, &param);
++
+ 		stop->sched_class = &stop_sched_class;
+ 	}
+ 
+@@ -2838,7 +2841,11 @@
+ 	 * Revert to default priority/policy on fork if requested.
+ 	 */
+ 	if (unlikely(p->sched_reset_on_fork)) {
+-			
++		
++		if (p->policy == SCHED_FIFO || p->policy == SCHED_RR) {
++			p->policy = SCHED_NORMAL;
++			p->normal_prio = p->static_prio;
++		}
+ 
+ 		if (PRIO_TO_NICE(p->static_prio) < 0) {
+ 			p->static_prio = NICE_TO_PRIO(0);
+@@ -5081,8 +5088,9 @@
+ 		reset_on_fork = !!(policy & SCHED_RESET_ON_FORK);
+ 		policy &= ~SCHED_RESET_ON_FORK;
+ 
+-	if (policy != policy != SCHED_NORMAL && policy != SCHED_BATCH &&
+-				policy != SCHED_IDLE)
++		if (policy != SCHED_FIFO && policy != SCHED_RR &&
++		    policy != SCHED_NORMAL && policy != SCHED_BATCH &&
++		    policy != SCHED_IDLE)
+ 			return -EINVAL;
+ 	}
+ 
+@@ -5731,8 +5739,10 @@
+ 
+ 	switch (policy) {
+ 	
+-	
+-	
++	case SCHED_FIFO:
++	case SCHED_RR:
++		ret = MAX_USER_RT_PRIO-1;
++		break;
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
+ 	case SCHED_IDLE:
+@@ -5755,8 +5765,10 @@
+ 
+ 	switch (policy) {
+ 	
+-	
+-	
++	case SCHED_FIFO:
++	case SCHED_RR:
++		ret = 1;
++		break;
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
+ 	case SCHED_IDLE:
+diff -urN cs411-group25/kernel/sched_rt.c cs411-group25new/kernel/sched_rt.c
+--- cs411-group25/kernel/sched_rt.c	2014-04-08 18:28:32.209012827 -0700
++++ cs411-group25new/kernel/sched_rt.c	2014-04-12 16:48:35.892463607 -0700
+@@ -1766,7 +1766,13 @@
+ 	 * RR tasks need a special form of timeslice management.
+ 	 * FIFO tasks have no timeslices.
+ 	 */
++	if (p->policy != SCHED_RR)
++		return;
+ 
++	if (--p->rt.time_slice)
++		return;
++
++	p->rt.time_slice = DEF_TIMESLICE;
+ 	
+ 	/*
+ 	 * Requeue to the end of queue if we are not the only element
+@@ -1793,7 +1799,10 @@
+ 	/*
+ 	 * Time slice is 0 for SCHED_FIFO tasks
+ 	 */
+-	 
++
++	 if (task->policy == SCHED_RR)
++		 return DEF_TIMESLICE;
++	 else
+ 		return 0;
+ }
+ 

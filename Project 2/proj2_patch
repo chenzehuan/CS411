@@ -1,0 +1,287 @@
+diff -urN cs411-group25/block/Kconfig.iosched cs411-group25new/block/Kconfig.iosched
+--- cs411-group25/block/Kconfig.iosched	2014-04-27 15:33:18.171388082 -0700
++++ cs411-group25new/block/Kconfig.iosched	2014-04-27 22:08:25.392790363 -0700
+@@ -12,6 +12,13 @@
+ 	  that do their own scheduling and require only minimal assistance from
+ 	  the kernel.
+ 
++config IOSCHED_SSTF
++	bool
++	default y
++	---help---
++	  Group 25's implementation of the SSTF I/O scheduler.
++
++
+ config IOSCHED_DEADLINE
+ 	tristate "Deadline I/O scheduler"
+ 	default y
+@@ -59,6 +66,10 @@
+ 	config DEFAULT_NOOP
+ 		bool "No-op"
+ 
++	config DEFAULT_SSTF
++		bool "SSTF"
++
++
+ endchoice
+ 
+ config DEFAULT_IOSCHED
+@@ -66,6 +77,7 @@
+ 	default "deadline" if DEFAULT_DEADLINE
+ 	default "cfq" if DEFAULT_CFQ
+ 	default "noop" if DEFAULT_NOOP
++	default "sstf" if DEFAULT_SSTF
+ 
+ endmenu
+ 
+diff -urN cs411-group25/block/Makefile cs411-group25new/block/Makefile
+--- cs411-group25/block/Makefile	2014-04-27 15:33:18.220388092 -0700
++++ cs411-group25new/block/Makefile	2014-04-27 15:43:06.813387541 -0700
+@@ -13,6 +13,7 @@
+ obj-$(CONFIG_IOSCHED_NOOP)	+= noop-iosched.o
+ obj-$(CONFIG_IOSCHED_DEADLINE)	+= deadline-iosched.o
+ obj-$(CONFIG_IOSCHED_CFQ)	+= cfq-iosched.o
++obj-$(CONFIG_IOSCHED_SSTF)	+= sstf-iosched.o
+ 
+ obj-$(CONFIG_BLOCK_COMPAT)	+= compat_ioctl.o
+ obj-$(CONFIG_BLK_DEV_INTEGRITY)	+= blk-integrity.o
+diff -urN cs411-group25/block/sstf-iosched.c cs411-group25new/block/sstf-iosched.c
+--- cs411-group25/block/sstf-iosched.c	1969-12-31 16:00:00.000000000 -0800
++++ cs411-group25new/block/sstf-iosched.c	2014-04-28 17:15:57.824779365 -0700
+@@ -0,0 +1,236 @@
++/*
++ * elevator sstf
++ */
++#include <linux/blkdev.h>
++#include <linux/elevator.h>
++#include <linux/bio.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/init.h>
++
++struct sstf_data {
++	struct list_head queue;
++	sector_t pos;
++	int dir;
++};
++
++static inline sector_t
++sec_abs(sector_t a, sector_t b)
++{
++	if (a > b) {
++		return a - b;
++	}
++	return b - a;
++
++}
++
++static void
++sstf_merged_requests(struct request_queue *q, struct request *rq,
++		     struct request *next)
++{
++	list_del_init(&next->queuelist);
++}
++
++static int
++sstf_dispatch(struct request_queue *q, int force)
++{
++	struct sstf_data *nd = q->elevator->elevator_data;
++
++	struct list_head *i;
++
++	struct request *curr;
++	struct request *best;
++	struct request *same;
++
++	sector_t bestsec;
++	sector_t currsec;
++
++	if (!list_empty(&nd->queue)) {
++
++		printk(KERN_INFO "----START of dispatch----\n");
++
++		best = list_entry(nd->queue.next, struct request, queuelist);
++		bestsec = ULONG_MAX;
++
++		same =
++		    list_entry(best->queuelist.prev, struct request, queuelist);
++
++		/* Check if queue has 1 element */
++		if (best != same) {
++
++			/* Going forward */
++			if (nd->dir == 1) {
++
++				/* Assume we need to reverse */
++				nd->dir = 0;
++
++				list_for_each(i, &nd->queue) {
++					curr =
++					    list_entry(i, struct request,
++						       queuelist);
++					currsec = blk_rq_pos(curr);
++
++					printk(KERN_INFO
++					       "current sector: %llu \n",
++					       currsec);
++
++					if ((sec_abs(currsec, nd->pos) <
++					     sec_abs(bestsec, nd->pos))
++					    && (currsec > nd->pos)) {
++						bestsec = currsec;
++						best = curr;
++						printk(KERN_INFO
++						       "new best sector: %llu \n",
++						       bestsec);
++						/* If found something, keep direction */
++						nd->dir = 1;
++					}
++				}
++			}
++
++			/* Going backward */
++			else if (nd->dir == 0) {
++
++				/* Assume we need to reverse */
++				nd->dir = 1;
++
++				list_for_each(i, &nd->queue) {
++					curr =
++					    list_entry(i, struct request,
++						       queuelist);
++					currsec = blk_rq_pos(curr);
++
++					printk(KERN_INFO
++					       "current sector: %llu \n",
++					       currsec);
++
++					if (sec_abs(currsec, nd->pos) <
++					    sec_abs(bestsec, nd->pos)
++					    && (currsec < nd->pos)) {
++						bestsec = currsec;
++						best = curr;
++						printk(KERN_INFO
++						       "new best sector: %llu \n",
++						       bestsec);
++						/* If found something, keep direction */
++						nd->dir = 0;
++					}
++				}
++			}
++
++		}
++
++		printk(KERN_INFO "best sector: %llu, dir: %d \n", bestsec,
++		       nd->dir);
++		list_del_init(&best->queuelist);
++		//nd->pos = bestsec;
++		/* Place head at end of best request (start location plus that request's size) */
++		nd->pos = bestsec + blk_rq_sectors(best);
++		elv_dispatch_sort(q, best);
++		printk(KERN_INFO "----END of dispatch----\n");
++		return 1;
++
++	}
++
++	/* If the queue is empty, reverse direction for future dispatch event */
++	if (nd->dir == 1) {
++		nd->pos = ULONG_MAX / 2;
++		nd->dir = 0;
++	} else if (nd->dir == 0) {
++		nd->pos = 0;
++		nd->dir = 1;
++	}
++
++	return 0;
++
++}
++
++static void
++sstf_add_request(struct request_queue *q, struct request *rq)
++{
++	struct sstf_data *nd = q->elevator->elevator_data;
++
++	list_add_tail(&rq->queuelist, &nd->queue);
++
++}
++
++static struct request *
++sstf_former_request(struct request_queue *q, struct request *rq)
++{
++	struct sstf_data *nd = q->elevator->elevator_data;
++
++	if (rq->queuelist.prev == &nd->queue)
++		return NULL;
++	return list_entry(rq->queuelist.prev, struct request, queuelist);
++}
++
++static struct request *
++sstf_latter_request(struct request_queue *q, struct request *rq)
++{
++	struct sstf_data *nd = q->elevator->elevator_data;
++
++	if (rq->queuelist.next == &nd->queue)
++		return NULL;
++	return list_entry(rq->queuelist.next, struct request, queuelist);
++}
++
++static void *
++sstf_init_queue(struct request_queue *q)
++{
++	struct sstf_data *nd;
++
++	nd = kmalloc_node(sizeof (*nd), GFP_KERNEL, q->node);
++	if (!nd)
++		return NULL;
++	INIT_LIST_HEAD(&nd->queue);
++
++	nd->dir = 1;		//set to forward initially
++
++	nd->pos = 0;
++
++	return nd;
++}
++
++static void
++sstf_exit_queue(struct elevator_queue *e)
++{
++	struct sstf_data *nd = e->elevator_data;
++
++	BUG_ON(!list_empty(&nd->queue));
++	kfree(nd);
++}
++
++static struct elevator_type elevator_sstf = {
++	.ops = {
++		.elevator_merge_req_fn = sstf_merged_requests,
++		.elevator_dispatch_fn = sstf_dispatch,
++		.elevator_add_req_fn = sstf_add_request,
++		.elevator_former_req_fn = sstf_former_request,
++		.elevator_latter_req_fn = sstf_latter_request,
++		.elevator_init_fn = sstf_init_queue,
++		.elevator_exit_fn = sstf_exit_queue,
++		},
++	.elevator_name = "sstf",
++	.elevator_owner = THIS_MODULE,
++};
++
++static int __init
++sstf_init(void)
++{
++	elv_register(&elevator_sstf);
++
++	return 0;
++}
++
++static void __exit
++sstf_exit(void)
++{
++	elv_unregister(&elevator_sstf);
++}
++
++module_init(sstf_init);
++module_exit(sstf_exit);
++
++MODULE_AUTHOR("Group 25: Nicholas Jordan, Bryce Holley, Lei Wang");
++MODULE_LICENSE("OSU");
++MODULE_DESCRIPTION("SSTF I/O scheduler");

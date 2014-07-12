@@ -1,0 +1,149 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{graphicx}                                        
+\usepackage{amssymb}                                         
+\usepackage{amsmath}                                         
+\usepackage{amsthm}                                          
+
+\usepackage{alltt}                                           
+\usepackage{float}
+\usepackage{color}
+\usepackage{url}
+
+\usepackage{balance}
+\usepackage[TABBOTCAP, tight]{subfigure}
+\usepackage{enumitem}
+\usepackage{pstricks, pst-node}
+
+\usepackage{geometry}
+\geometry{textheight=8.5in, textwidth=6in}
+
+
+%\usepackage{hyperref}
+
+\def\name{Nicholas Jordan, Bryce Holley}
+
+%pull in the necessary preamble matter for pygments output
+
+%% The following metadata will show up in the PDF properties
+% \hypersetup{
+%   colorlinks = false,
+%   urlcolor = black,
+%   pdfauthor = {\name},
+%   pdfkeywords = {cs411},
+%   pdftitle = {CS 411 Project 1},
+%   pdfsubject = {CS 411 Project 1},
+%   pdfpagemode = UseNone
+% }
+
+\parindent = 0.0 in
+\parskip = 0.1 in
+
+\begin{document}
+
+\hfill \name
+
+\hfill \today
+
+\section*{CS 411 Project 1}
+\section*{Our Solution}
+\paragraph{} 
+For implementing the two process scheduling algorithms, Round Robin and FIFO, into the supplied kernel, a stock Linux 3.0.4 kernel found at \url{https://www.kernel.org/pub/linux/kernel/v3.0}
+already contains all relevant functionality, specifically within the sched.c and sched\_rt.c files in the kernel directory.
+\paragraph{} 
+By using the diff command with the project kernel and stock 3.0.4 kernel, we were able to identify each of the different additions to be made within these two files in the project kernel. Each addition makes use of other existing functions, variables, and structures already defined elsewhere in the scheduler header file and the two .c files.
+\\\\The additions are as follows:
+\\\\
+\textbf{sched.c}
+\begin{enumerate}
+\item[$(1)$]
+\begin{verbatim} 
+if (unlikely(policy == SCHED_FIFO || policy == SCHED_RR))
+        return 1;
+
+\end{verbatim}
+
+This allows the rt\_policy function to return 1 if the policy is RR or FIFO, indicating to the caller that the policy is a real-time policy. The unlikely() function lets the compiler know that this branch will usually not be taken, in order to improve performance.
+
+\item[$(2)$]
+\begin{verbatim} 
+sched_setscheduler_nocheck(stop, SCHED_FIFO, &param);
+
+\end{verbatim}
+
+Located within the sched\_set\_stop\_task function, this calls several nested functions to change to FIFO policy.
+
+\item[$(3)$]
+\begin{verbatim} 
+if (p->policy == SCHED_FIFO || p->policy == SCHED_RR) {
+        p->policy = SCHED_NORMAL;
+        p->normal_prio = p->static_prio;
+        }
+
+\end{verbatim}
+This allows the sched\_fork function to revert to the NORMAL scheduler in the event that the current policy is RR or FIFO, as needed.
+
+\item[$(4)$]
+\begin{verbatim} 
+if (policy != SCHED_FIFO && policy != SCHED_RR &&
+        policy != SCHED_NORMAL && policy != SCHED_BATCH &&
+        policy != SCHED_IDLE)
+        return -EINVAL;
+
+\end{verbatim}
+This if-block ensures that the policy passed into the \_\_sched\_setscheduler function is a valid scheduler policy (EINVAL $=>$ “Invalid Argument”).
+
+\item[$(5)$]
+\begin{verbatim} 
+switch (policy) {
+case SCHED_FIFO:
+case SCHED_RR:
+        ret = MAX_USER_RT_PRIO-1;
+        break;
+...
+
+\end{verbatim}
+This case is part of a SYSCALL\_DEFINE1 that returns a value for sched\_get\_priority\_max. If the scheduling policy is FIFO or RR, the max priority is returned (generally 99).
+
+\item[$(6)$]
+\begin{verbatim} 
+switch (policy) {
+case SCHED_FIFO:
+case SCHED_RR:
+        ret = 1;
+        break;
+...
+
+\end{verbatim}
+Another SYSCALL\_DEFINE1, this time for sched\_get\_priority\_min. 1 is returned for FIFO and RR, 0 otherwise.
+\end{enumerate}
+\textbf{sched\_rt.c}
+\begin{enumerate}
+\item[$(7)$]
+\begin{verbatim} 
+if (p->policy != SCHED_RR)
+        return;
+ 
+if (--p->rt.time_slice)
+        return;
+
+p->rt.time_slice = DEF_TIMESLICE;
+
+\end{verbatim}
+
+This section sets up the time slice for the given task\_struct object. In the case that FIFO is active, time\_slice doesn’t matter (processes are run whole), and if the time\_slice does not fall below 0 after decrementing 1, it continues to set DEF\_TIMESLICE for RR policies only. 
+
+\item[$(8)$]
+\begin{verbatim} 
+if (task->policy == SCHED_RR)
+        return DEF_TIMESLICE;
+else
+        return 0;
+
+\end{verbatim}
+
+This completes the functionality of get\_rr\_interval\_rt for real-time policies, returning the current timeslice for RR policies, and 0 for FIFO policies.
+
+\end{enumerate}
+
+\end{document}

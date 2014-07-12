@@ -1,0 +1,59 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{graphicx}                                        
+\usepackage{amssymb}                                         
+\usepackage{amsmath}                                         
+\usepackage{amsthm}                                          
+
+\usepackage{alltt}                                           
+\usepackage{float}
+\usepackage{color}
+\usepackage{url}
+
+\usepackage{balance}
+\usepackage[TABBOTCAP, tight]{subfigure}
+\usepackage{enumitem}
+\usepackage{pstricks, pst-node}
+
+\usepackage{geometry}
+\geometry{textheight=8.5in, textwidth=6in}
+
+
+%\usepackage{hyperref}
+
+\def\name{Nicholas Jordan, Bryce Holley, Lei Wang}
+
+%pull in the necessary preamble matter for pygments output
+
+%% The following metadata will show up in the PDF properties
+% \hypersetup{
+%   colorlinks = false,
+%   urlcolor = black,
+%   pdfauthor = {\name},
+%   pdfkeywords = {cs411},
+%   pdftitle = {CS 411 Project 2},
+%   pdfsubject = {CS 411 Project 2},
+%   pdfpagemode = UseNone
+% }
+
+\parindent = 0.0 in
+\parskip = 0.1 in
+
+\begin{document}
+
+\hfill \name
+
+\hfill \today
+
+\section*{CS 411 Project 2: SSTF I/O Scheduler}
+\section*{Implementation Details}
+\paragraph{} 
+To implement the Shortest Seek Time First I/O scheduler in the sstf-iosched.c file, we utilized the contents of the existing /block/noop-iosched.c file, which contained all necessary framework for our needs. The main contents modified were the dispatch request function, and noop\_data structure. We also used the existing Kconfig.iosched and makefile template to build our new file and add “sstf” to the I/O scheduling options. All other functions and declarations referring to “noop” were renamed to refer to “sstf”, but otherwise remain untouched.
+\paragraph{} 
+No-op simply takes the next request from the request queue, regardless of sector position, and dispatches them. Our SSTF dispatch function instead keeps track of a head direction and position (in an sstf\_data structure), and compares these values against all elements of the queue. If the direction is forward (represented by 1), only values above the head position will be compared, and the best candidate to dispatch will have the closest absolute value. Reverse direction (0) works similarly, except the head position is compared against values lower. The new head will be set to the end sector of this best request, to be compared against in a future dispatch request.
+\paragraph{} 
+We also check for an empty request queue and a queue with a single element. If empty, then the direction will be reversed for a future dispatch request. If the queue has one element, then that element is dispatched. In initialization, we set the direction to go forward and the head position to 0.
+\\\\
+Overall this functions like an elevator, and looks for the shortest seek distances in a given direction.
+
+\end{document}

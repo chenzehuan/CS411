@@ -1,0 +1,59 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{graphicx}                                        
+\usepackage{amssymb}                                         
+\usepackage{amsmath}                                         
+\usepackage{amsthm}                                          
+
+\usepackage{alltt}                                           
+\usepackage{float}
+\usepackage{color}
+\usepackage{url}
+
+\usepackage{balance}
+\usepackage[TABBOTCAP, tight]{subfigure}
+\usepackage{enumitem}
+\usepackage{pstricks, pst-node}
+
+\usepackage{geometry}
+\geometry{textheight=8.5in, textwidth=6in}
+
+
+%\usepackage{hyperref}
+
+\def\name{Nicholas Jordan, Bryce Holley, Lei Wang}
+
+%pull in the necessary preamble matter for pygments output
+
+%% The following metadata will show up in the PDF properties
+% \hypersetup{
+%   colorlinks = false,
+%   urlcolor = black,
+%   pdfauthor = {\name},
+%   pdfkeywords = {cs411},
+%   pdftitle = {CS 411 Project 4},
+%   pdfsubject = {CS 411 Project 4},
+%   pdfpagemode = UseNone
+% }
+
+\parindent = 0.0 in
+\parskip = 0.1 in
+
+\begin{document}
+
+\hfill \name
+
+\hfill \today
+
+\section*{CS 411 Project 4}
+\section*{Our Solution}
+\paragraph{} 
+To implement the SLOB best-fit algorithm, we first analyzed how the existing first-fit implementation works. What first-fit does is search through a list of pages, finds the first page with enough free space, and then searches within that page for the first available block to allocate. Our best-fit implementation keeps the search through the list of pages, finds the first page with enough free space, but within that page it searches for the block with closest fit, at which point it allocates. To enable SLOB, we used make menuconfig, general setup, and selected SLOB.
+
+\paragraph{} 
+Since the slob\_page\_alloc() function controls the search within a page, this is the function we modified. Instead of immediately allocating at the first available block, we moved all relevant allocation code to run only at the end of the loop, after a best is found. When an available block is found, we have a secondary check to see if the difference is smaller than the previous best difference. This will result in having the best difference at completion of the loop. The saved best variables are prev, cur, aligned, delta, and the difference.
+
+\section*{Testing}
+\paragraph{} 
+We tested the fragmentation of both implementations by introducing global variables to keep track of the total claimed size of the slob (page size * number of pages created) as well as the amount used of that claimed space, such that the difference (claimed - used) is the amount of free/unused space in the allocated slob. In order to test the slob performance, we added two system calls: sys\_get\_slob\_amt\_claimed , sys\_get\_slob\_amt\_free. This allows us to call it in user space, and return the claimed and used variables. We then print the percentage of space that is unused (free/claimed) to present a more portable metric with memtest.c.
+\end{document}

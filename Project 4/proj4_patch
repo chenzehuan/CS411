@@ -1,0 +1,178 @@
+diff -urN cs411-group25new/mm/slob.c cs411-group25/mm/slob.c
+--- cs411-group25new/mm/slob.c	2014-04-08 18:29:32.825012000 -0700
++++ cs411-group25/mm/slob.c	2014-06-02 17:05:49.645051017 -0700
+@@ -86,6 +86,9 @@
+ typedef s32 slobidx_t;
+ #endif
+ 
++int mem_used = 0;
++int mem_claimed = 0;
++
+ struct slob_block {
+ 	slobidx_t units;
+ };
+@@ -264,13 +267,16 @@
+ 	free_pages((unsigned long)b, order);
+ }
+ 
+-/*
+- * Allocate a slob block within a given slob_page sp.
+- */
++
+ static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
+ {
+ 	slob_t *prev, *cur, *aligned = NULL;
++	slob_t *best_prev = NULL, *best_cur = NULL, *best_aligned = NULL;
++
+ 	int delta = 0, units = SLOB_UNITS(size);
++	int best_delta = 0;
++
++	slobidx_t best_diff = 0;
+ 
+ 	for (prev = NULL, cur = sp->free; ; prev = cur, cur = slob_next(cur)) {
+ 		slobidx_t avail = slob_units(cur);
+@@ -279,39 +285,58 @@
+ 			aligned = (slob_t *)ALIGN((unsigned long)cur, align);
+ 			delta = aligned - cur;
+ 		}
+-		if (avail >= units + delta) { /* room enough? */
+-			slob_t *next;
+ 
+-			if (delta) { /* need to fragment head to align? */
+-				next = slob_next(cur);
+-				set_slob(aligned, avail - delta, next);
+-				set_slob(cur, delta, aligned);
+-				prev = cur;
+-				cur = aligned;
+-				avail = slob_units(cur);
++		/*Check for enough space*/
++		if (avail >= units + delta) { 
++			/*Check for first run or better difference*/
++			if (best_cur == NULL || avail - (units + delta) < best_fit) {
++				best_prev = prev;
++				best_cur = cur;
++				best_aligned = aligned;
++				best_delta = delta;
++				best_diff = avail - (units + delta);
++			}
++
++		}
++		/*Check for end of list, allocate the best found*/
++		if (slob_last(cur)) {
++			if (best_cur != NULL) {
++
++			slob_t *best_next = NULL;
++			slobidx_t best_avail = slob_units(best_cur);
++
++			if (best_delta) { /* need to fragment head to align? */
++				best_next = slob_next(best_cur);
++				set_slob(best_aligned, best_avail - best_delta, best_next);
++				set_slob(best_cur, best_delta, best_aligned);
++				best_prev = best_cur;
++				best_cur = best_aligned;
++				best_avail = slob_units(best_cur);
+ 			}
+ 
+-			next = slob_next(cur);
+-			if (avail == units) { /* exact fit? unlink. */
+-				if (prev)
+-					set_slob(prev, slob_units(prev), next);
++			best_next = slob_next(best_cur);
++			if (best_avail == units) { /* exact fit? unlink. */
++				if (best_prev)
++					set_slob(best_prev, slob_units(best_prev), best_next);
+ 				else
+-					sp->free = next;
++					sp->free = best_next;
+ 			} else { /* fragment */
+-				if (prev)
+-					set_slob(prev, slob_units(prev), cur + units);
++				if (best_prev)
++					set_slob(best_prev, slob_units(best_prev), best_cur + units);
+ 				else
+-					sp->free = cur + units;
+-				set_slob(cur + units, avail - units, next);
++					sp->free = best_cur + units;
++				set_slob(best_cur + units, best_avail - units, best_next);
+ 			}
+ 
+ 			sp->units -= units;
+ 			if (!sp->units)
+ 				clear_slob_page_free(sp);
+-			return cur;
+-		}
+-		if (slob_last(cur))
++			return best_cur;
++
++
++			}
+ 			return NULL;
++		}
+ 	}
+ }
+ 
+@@ -353,6 +378,8 @@
+ 		b = slob_page_alloc(sp, size, align);
+ 		if (!b)
+ 			continue;
++		else 
++			mem_used = mem_used + size;
+ 
+ 		/* Improve fragment distribution and reduce our average
+ 		 * search time by starting our next search here. (see
+@@ -362,6 +389,8 @@
+ 			list_move_tail(slob_list, prev->next);
+ 		break;
+ 	}
++
++
+ 	spin_unlock_irqrestore(&slob_lock, flags);
+ 
+ 	/* Not enough space: must allocate a new page */
+@@ -381,6 +410,9 @@
+ 		b = slob_page_alloc(sp, size, align);
+ 		BUG_ON(!b);
+ 		spin_unlock_irqrestore(&slob_lock, flags);
++
++		mem_claimed = mem_claimed + PAGE_SIZE;
++	
+ 	}
+ 	if (unlikely((gfp & __GFP_ZERO) && b))
+ 		memset(b, 0, size);
+@@ -405,9 +437,13 @@
+ 	sp = slob_page(block);
+ 	units = SLOB_UNITS(size);
+ 
++	mem_used = mem_used - size;
++
+ 	spin_lock_irqsave(&slob_lock, flags);
+ 
+ 	if (sp->units + units == SLOB_UNITS(PAGE_SIZE)) {
++		mem_claimed = mem_claimed - PAGE_SIZE;
++
+ 		/* Go directly to page allocator. Do not pass slob allocator */
+ 		if (slob_page_free(sp))
+ 			clear_slob_page_free(sp);
+@@ -415,6 +451,7 @@
+ 		clear_slob_page(sp);
+ 		free_slob_page(sp);
+ 		slob_free_pages(b, 0);
++
+ 		return;
+ 	}
+ 
+@@ -688,3 +725,14 @@
+ {
+ 	/* Nothing to do */
+ }
++
++
++asmlinkage long sys_get_slob_amt_claimed(void){
++	return mem_claimed;
++
++}
++
++
++asmlinkage long sys_get_slob_amt_free(void){
++	return mem_claimed - mem_used;
++}
